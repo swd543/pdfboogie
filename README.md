@@ -1,5 +1,7 @@
 # PDFBoogie
 
+[![CI & Deploy](https://github.com/swd543/pdfboogie/actions/workflows/ci.yml/badge.svg)](https://github.com/swd543/pdfboogie/actions/workflows/ci.yml)
+
 Private PDF tools for the browser. Every operation — compressing, merging,
 converting, signing — runs entirely on your machine. Your documents are never
 uploaded anywhere: there is no backend to upload to.
