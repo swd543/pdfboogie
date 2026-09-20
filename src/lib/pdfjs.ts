@@ -1,0 +1,68 @@
+/**
+ * Lazy loader for Mozilla PDF.js (pdfjs-dist).
+ *
+ * PDF.js is the heaviest dependency (~300 KB gzipped + worker), so it is
+ * only loaded on demand via dynamic import — each tool page code-splits it
+ * into its own chunk, and the worker starts only when a file is opened.
+ */
+type PdfjsLib = typeof import('pdfjs-dist');
+
+let libPromise: Promise<PdfjsLib> | null = null;
+
+export function pdfjs(): Promise<PdfjsLib> {
+  if (!libPromise) {
+    libPromise = (async () => {
+      const [lib, worker] = await Promise.all([
+        import('pdfjs-dist'),
+        // `?url` makes Vite emit the worker as a plain asset (hashed name);
+        // this avoids `new Worker(new URL(...))` bundling quirks.
+        import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+      ]);
+
+      // One shared module worker for the page's lifetime.
+      lib.GlobalWorkerOptions.workerPort = new Worker(worker.default, {
+        type: 'module',
+        credentials: 'same-origin',
+      });
+
+      return lib;
+    })().catch((err) => {
+      libPromise = null; // allow retry after a transient failure
+      throw err;
+    });
+  }
+  return libPromise;
+}
+
+/**
+ * Open a PDF document with the site's font/cmap configuration.
+ * (PDF.js v6 passes cMapUrl & standardFontDataUrl per-document.)
+ * CMaps + standard fonts are copied to the site root by
+ * scripts/copy-assets.mjs; only fetched by the worker when a document
+ * actually needs them (most Latin documents never touch them).
+ */
+export async function pdfDocument(
+  data: Uint8Array,
+): Promise<import('pdfjs-dist').PDFDocumentProxy> {
+  const lib = await pdfjs();
+  await pendingDestroy; // never race an in-flight worker teardown
+  return lib.getDocument({
+    data,
+    cMapUrl: `${import.meta.env.BASE_URL}cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `${import.meta.env.BASE_URL}standard_fonts/`,
+  }).promise;
+}
+
+/** Destroy chain: pdfjs workers must be fully torn down before a new
+ *  `getDocument` reuses them, or the new open fails with
+ *  "the worker is being destroyed". We serialize every destroy before the
+ *  next open so fire-and-forget disposePdf() call sites stay safe. */
+let pendingDestroy: Promise<void> = Promise.resolve();
+
+/** Release a document opened via pdfDocument (frees worker memory). */
+export function disposePdf(pdf: import('pdfjs-dist').PDFDocumentProxy): Promise<void> {
+  const done = pdf.loadingTask.destroy();
+  pendingDestroy = pendingDestroy.then(() => done);
+  return done;
+}

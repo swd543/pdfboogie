@@ -1,0 +1,100 @@
+name: CI & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pages site parameters — used for the deploy build (base path + absolute URLs)
+  VITE_BASE: /pdfboogie/
+  VITE_SITE_URL: https://swd543.github.io/pdfboogie
+
+jobs:
+  test:
+    name: Typecheck, unit tests, E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      # E2E runs against the base-`/` build (Playwright serves it from /)
+      - name: Build (base /)
+        env:
+          VITE_BASE: /
+          VITE_SITE_URL: http://localhost:8899
+        run: |
+          pnpm build
+          node scripts/postbuild.mjs
+
+      - name: Install Playwright browser + system deps
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E (Playwright)
+        run: pnpm test:e2e
+
+  deploy:
+    name: Build & deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Pages build: sub-path base + absolute site URL (sitemap/OG/robots)
+      - name: Build for Pages
+        run: |
+          pnpm build
+          node scripts/postbuild.mjs
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

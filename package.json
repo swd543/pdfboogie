@@ -1,0 +1,44 @@
+{
+  "name": "pdfboogie",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.13.1",
+  "description": "Private, in-browser PDF tools. Your file never leaves your device.",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "postbuild": "node scripts/postbuild.mjs",
+    "start": "vite preview",
+    "preview": "vite preview",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "wasm": "cd wasm/pdfcore && wasm-pack build . --target web --out-dir pkg --out-name pdfcore",
+    "og": "node scripts/og-image.mjs",
+    "predev": "node scripts/copy-assets.mjs",
+    "prebuild": "node scripts/copy-assets.mjs",
+    "test": "vitest run",
+    "test:fixtures": "node e2e/make-fixtures.mjs",
+    "test:e2e": "pnpm test:fixtures && playwright test --config e2e/playwright.config.ts"
+  },
+  "dependencies": {
+    "@solidjs/meta": "^0.29.4",
+    "@solidjs/router": "1.0.0",
+    "@solidjs/start": "^2.0.5",
+    "fflate": "^0.8.3",
+    "nitro": "3.0.260903-beta",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289",
+    "solid-js": "^1.9.15"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.2",
+    "typescript": "^5.5.4",
+    "vite": "^8.0.0",
+    "vitest": "^5.0.1"
+  }
+}

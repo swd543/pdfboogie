@@ -1,0 +1,302 @@
+/**
+ * Shared E2E helpers:
+ *  - file dropping (synthetic HTML5 drag&drop + native <input> path)
+ *  - in-page canvas image generation (PNG/JPEG/WebP, exact dimensions)
+ *  - download capture (real browser downloads of the site's blobs)
+ *  - Node-side validators for PDF / ZIP / PNG / JPEG / WebP / DOCX / ODT
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import type { Page } from '@playwright/test';
+import { unzipSync } from 'fflate';
+import pdfLib from 'pdf-lib';
+import * as pdfjs from 'pdfjs-dist';
+
+const FIXTURES = path.join(import.meta.dirname, 'fixtures');
+
+export function fixtureBytes(name: string): Uint8Array {
+  return new Uint8Array(fs.readFileSync(path.join(FIXTURES, name)));
+}
+
+/* ------------------------------------------------------------------ */
+/* Page-side actions                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Copy e2e/fixtures → dist/e2e/fixtures so the site serves them same-origin. */
+export function syncFixturesToDist(): number {
+  const src = path.join(import.meta.dirname, 'fixtures');
+  const dest = path.join(import.meta.dirname, '..', 'dist', 'e2e', 'fixtures');
+  fs.mkdirSync(dest, { recursive: true });
+  let n = 0;
+  for (const f of fs.readdirSync(src)) {
+    if (f.endsWith('.pdf')) {
+      fs.copyFileSync(path.join(src, f), path.join(dest, f));
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/**
+ * Drop fixture PDFs (served same-origin under /e2e/fixtures/) onto
+ * `.dropzone` via a synthetic HTML5 drop. No bytes cross the CDP bridge.
+ */
+export async function dropFixtures(page: Page, names: string[]): Promise<void> {
+  await page.evaluate(async (ns: string[]) => {
+    const dt = new DataTransfer();
+    for (const name of ns) {
+      const res = await fetch(`/e2e/fixtures/${name}`);
+      if (!res.ok) throw new Error(`fixture fetch failed: ${name} (${res.status})`);
+      const file = new File([new Uint8Array(await res.arrayBuffer())], name, {
+        type: 'application/pdf',
+      });
+      dt.items.add(file);
+    }
+    const target = document.querySelector('.dropzone') as HTMLElement;
+    target.dispatchEvent(
+      new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
+    );
+  }, names);
+}
+
+/** In-page canvas → File specs (no bytes cross the page boundary). */
+interface CanvasImageSpec {
+  name: string;
+  mime: string;
+  w: number;
+  h: number;
+  /** 'solid' | 'hgrad' | 'vgrad' | 'quarters' — enough to verify orientation. */
+  paint: string;
+  color?: number[];
+}
+
+export async function makeCanvasImages(page: Page, specs: CanvasImageSpec[]): Promise<void> {
+  await page.evaluate(async (specs: CanvasImageSpec[]) => {
+    const dt = new DataTransfer();
+    for (const s of specs) {
+      const c = document.createElement('canvas');
+      c.width = s.w;
+      c.height = s.h;
+      const ctx = c.getContext('2d')!;
+      const [cr, cg, cb] = s.color ?? [80, 80, 200];
+      if (s.paint === 'solid') {
+        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+        ctx.fillRect(0, 0, c.width, c.height);
+      } else if (s.paint === 'hgrad') {
+        const g = ctx.createLinearGradient(0, 0, c.width, 0);
+        g.addColorStop(0, `rgb(${cr},${cg},${cb})`);
+        g.addColorStop(1, 'white');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, c.width, c.height);
+      } else if (s.paint === 'vgrad') {
+        const g = ctx.createLinearGradient(0, 0, 0, c.height);
+        g.addColorStop(0, `rgb(${cr},${cg},${cb})`);
+        g.addColorStop(1, 'white');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, c.width, c.height);
+      } else {
+        // quarters: top-left red, top-right green, bottom-left blue, bottom-right yellow
+        ctx.fillStyle = '#d00';
+        ctx.fillRect(0, 0, c.width / 2, c.height / 2);
+        ctx.fillStyle = '#0a0';
+        ctx.fillRect(c.width / 2, 0, c.width / 2, c.height / 2);
+        ctx.fillStyle = '#00d';
+        ctx.fillRect(0, c.height / 2, c.width / 2, c.height / 2);
+        ctx.fillStyle = '#dd0';
+        ctx.fillRect(c.width / 2, c.height / 2, c.width / 2, c.height / 2);
+      }
+      const blob = await new Promise<Blob | null>((res) => c.toBlob(res, s.mime));
+      if (!blob) throw new Error(`canvas toBlob failed for ${s.name}`);
+      dt.items.add(new File([blob], s.name, { type: s.mime }));
+    }
+    const target = document.querySelector('.dropzone') as HTMLElement;
+    target.dispatchEvent(
+      new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
+    );
+  }, specs);
+}
+
+export interface DropFileSpec {
+  name: string;
+  type: string;
+  /** Raw bytes (kept small). */
+  data: number[];
+}
+
+/** Dispatch a synthetic HTML5 drop of inline files onto `.dropzone`. */
+export async function dropFiles(page: Page, dropzone: DropFileSpec[]): Promise<void> {
+  await page.evaluate((specs: DropFileSpec[]) => {
+    const dt = new DataTransfer();
+    for (const s of specs) {
+      dt.items.add(new File([new Uint8Array(s.data)], s.name, { type: s.type }));
+    }
+    const target = document.querySelector('.dropzone') as HTMLElement;
+    target.dispatchEvent(
+      new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
+    );
+  }, dropzone);
+}
+export async function inputFiles(
+  page: Page,
+  files: { name: string; type: string; data: number[] }[],
+): Promise<void> {
+  const abs = files.map((f) => {
+    const p = path.join(import.meta.dirname, '.tmp-input', f.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, Buffer.from(f.data));
+    return p;
+  });
+  await page.locator('.dz-input').first().setInputFiles(abs);
+}
+
+/**
+ * Run `action` and capture the download it triggers (the site downloads via
+ * object-URL anchor clicks, which Chromium reports as downloads).
+ */
+export async function captureDownload(
+  page: Page,
+  action: () => Promise<void>,
+): Promise<Uint8Array> {
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 60_000 }),
+    action(),
+  ]);
+  const p = await download.path();
+  const buf = fs.readFileSync(p!); // Buffer — a Uint8Array subclass with readUInt*BE/LE helpers
+  fs.rmSync(p!, { force: true });
+  return buf;
+}
+
+export const clickButton = (page: Page, re: RegExp) =>
+  page.locator('button', { hasText: re }).first().click();
+
+/* ------------------------------------------------------------------ */
+/* Node-side validators                                                */
+/* ------------------------------------------------------------------ */
+
+export interface PdfPageInfo {
+  w: number;
+  h: number;
+  text: string;
+}
+
+export interface PdfInfo {
+  pages: PdfPageInfo[];
+}
+
+export async function pdfInfo(data: Uint8Array): Promise<PdfInfo> {
+  // pdfjs v6 rejects Node Buffers — hand it a plain Uint8Array view
+  const u8 = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  const pdf = await pdfjs.getDocument({ data: u8, isEvalSupported: false, useSystemFonts: false })
+    .promise;
+  const pages: PdfPageInfo[] = [];
+  for (let i = 1; i <= pdf.numPages; i += 1) {
+    const page = await pdf.getPage(i);
+    const vp = page.getViewport({ scale: 1 });
+    const tc = await page.getTextContent();
+    const text = tc.items.map((it) => ('str' in it ? it.str : '')).join('');
+    pages.push({ w: vp.width, h: vp.height, text });
+  }
+  await pdf.cleanup();
+  return { pages };
+}
+
+export function zipEntries(data: Uint8Array): Record<string, Uint8Array> {
+  return unzipSync(data);
+}
+
+export function pngSize(data: Uint8Array): { w: number; h: number } | null {
+  if (data.length < 24 || data[0] !== 0x89 || data[1] !== 0x50) return null;
+  return { w: data.readUInt32BE(16), h: data.readUInt32BE(20) };
+}
+
+export function jpegSize(data: Uint8Array): { w: number; h: number } | null {
+  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+  let off = 2;
+  while (off + 9 < data.length) {
+    if (data[off] !== 0xff) {
+      off += 1;
+      continue;
+    }
+    const marker = data[off + 1];
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { h: data.readUInt16BE(off + 5), w: data.readUInt16BE(off + 7) };
+    }
+    off += 2 + data.readUInt16BE(off + 2);
+  }
+  return null;
+}
+
+export function webpSize(data: Uint8Array): { w: number; h: number } | null {
+  if (data.length < 30) return null;
+  const sig = data.subarray(0, 4).toString('ascii');
+  const fourcc = data.subarray(8, 12).toString('ascii');
+  if (sig !== 'RIFF' || fourcc !== 'WEBP') return null;
+  if (fourcc === 'WEBP' && data.subarray(12, 16).toString('ascii') === 'VP8X') {
+    return { w: data.readUIntLE(24) + 1, h: data.readUIntLE(27) + 1 };
+  }
+  if (data.subarray(12, 16).toString('ascii') === 'VP8 ') {
+    return { w: data.readUInt16LE(26) & 0x3fff, h: data.readUInt16LE(28) & 0x3fff };
+  }
+  if (data.subarray(12, 16).toString('ascii') === 'VP8L') {
+    const b1 = data[21];
+    const b2 = data[22];
+    const b3 = data[23];
+    const w = (b1 | ((b2 & 0x3f) << 8)) + 1;
+    const h = ((b2 & 0xc0) << 6) | (b3 << 2) | 0;
+    return { w, h: (h >>> 0) + 1 };
+  }
+  return null;
+}
+
+const stripXmlTags = (xml: string) => xml.replace(/<[^>]+>/g, ' ');
+
+export function docxText(data: Uint8Array): string {
+  const entries = unzipSync(data);
+  const xml = entries['word/document.xml'];
+  if (!xml) throw new Error('docx: word/document.xml missing');
+  return stripXmlTags(new TextDecoder().decode(xml)).replace(/\s+/g, ' ');
+}
+
+export function docxXml(data: Uint8Array): string {
+  const entries = unzipSync(data);
+  const xml = entries['word/document.xml'];
+  if (!xml) throw new Error('docx: word/document.xml missing');
+  return new TextDecoder().decode(xml);
+}
+
+export function odtXml(data: Uint8Array, part: string): string {
+  const entries = unzipSync(data);
+  const xml = entries[part];
+  if (!xml) throw new Error(`odt: ${part} missing`);
+  return new TextDecoder().decode(xml);
+}
+
+/** First ZIP entry name + compression method (ODF mimetype-first check). */
+export function firstZipEntry(data: Uint8Array): { name: string; method: number } {
+  const nlen = data.readUInt16LE(26);
+  return {
+    name: data.subarray(30, 30 + nlen).toString('ascii'),
+    method: data.readUInt16LE(8),
+  };
+}
+
+/** pdf-lib round-trip: read AcroForm field values from a saved PDF. */
+export async function formFieldValues(data: Uint8Array): Promise<Record<string, string | boolean>> {
+  const doc = await pdfLib.PDFDocument.load(data, { ignoreEncryption: false });
+  const form = doc.getForm();
+  const out: Record<string, string | boolean> = {};
+  for (const field of form.getFields()) {
+    if (field.constructor.name === 'PDFTextField') {
+      out[field.getName()] = field.getText();
+    } else if (field.constructor.name === 'PDFCheckBox') {
+      out[field.getName()] = field.isChecked();
+    } else if (
+      field.constructor.name === 'PDFDropdown' ||
+      field.constructor.name === 'PDFRadioGroup'
+    ) {
+      out[field.getName()] = String(field.getSelected());
+    }
+  }
+  return out;
+}
