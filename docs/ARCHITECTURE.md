@@ -52,6 +52,16 @@ dependency on a backend. The only "server" is a static file host.
   `destroy()`ed (see `disposePdf`).
 - In Node (tests/E2E validation) pdfjs wants a plain `Uint8Array` and
   refuses Node `Buffer`s — the E2E helpers convert before `getDocument`.
+  And `pdfjs.getDocument` **detaches the buffer it is given** (it transfers
+  it to the worker), so any validator that needs the bytes afterwards must
+  hand pdfjs a copy (`e2e/helpers.ts` does this in `pdfInfo`).
+- pdfjs 6 computes a document fingerprint during every `getDocument()` via
+  `Uint8Array.prototype.toHex()` — a Baseline-2025 API (Chrome 140+,
+  Firefox 133+, Safari 18.2+, Node 26+). On older engines every document
+  load throws `toHex is not a function`. A ~10-line polyfill is installed
+  before pdfjs loads, both in the site (`src/lib/pdfjs.ts`, for older
+  WebViews) and in the E2E Node validators (`e2e/helpers.ts`, so the suite
+  runs on any Node — CI uses Node 24).
 
 ## Rust/WASM core (`wasm/pdfcore`)
 

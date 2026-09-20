@@ -7,6 +7,24 @@
  */
 type PdfjsLib = typeof import('pdfjs-dist');
 
+/**
+ * pdfjs 6 computes a document fingerprint during every getDocument() using
+ * `Uint8Array.prototype.toHex()` — a Baseline-2025 feature (Chrome 140+,
+ * Firefox 133+, Safari 18.2+, Node 26+). On older engines (some Android
+ * WebViews, older Node) it is missing and every document load throws
+ * "toHex is not a function". Patch it in once, before pdfjs is imported.
+ */
+{
+  const proto = Uint8Array.prototype as { toHex?: () => string };
+  if (typeof proto.toHex !== 'function') {
+    proto.toHex = function (this: Uint8Array): string {
+      let out = '';
+      for (let i = 0; i < this.length; i += 1) out += this[i]!.toString(16).padStart(2, '0');
+      return out;
+    };
+  }
+}
+
 let libPromise: Promise<PdfjsLib> | null = null;
 
 export function pdfjs(): Promise<PdfjsLib> {

@@ -12,6 +12,22 @@ import { unzipSync } from 'fflate';
 import pdfLib from 'pdf-lib';
 import * as pdfjs from 'pdfjs-dist';
 
+/**
+ * pdfjs (Node-side validators below) calls Uint8Array.prototype.toHex()
+ * during getDocument() (document fingerprint). Node < 26 lacks it — patch
+ * so the suite works on any Node (CI runs Node 24).
+ */
+{
+  const proto = Uint8Array.prototype as { toHex?: () => string };
+  if (typeof proto.toHex !== 'function') {
+    proto.toHex = function (this: Uint8Array): string {
+      let out = '';
+      for (let i = 0; i < this.length; i += 1) out += this[i]!.toString(16).padStart(2, '0');
+      return out;
+    };
+  }
+}
+
 const FIXTURES = path.join(import.meta.dirname, 'fixtures');
 
 export function fixtureBytes(name: string): Uint8Array {
@@ -185,8 +201,10 @@ export interface PdfInfo {
 }
 
 export async function pdfInfo(data: Uint8Array): Promise<PdfInfo> {
-  // pdfjs v6 rejects Node Buffers — hand it a plain Uint8Array view
-  const u8 = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  // pdfjs v6 rejects Node Buffers AND takes ownership of the buffer it is
+  // given (it detaches the original) — pass a plain Uint8Array *copy* so
+  // the caller's bytes stay usable afterwards.
+  const u8 = new Uint8Array(data);
   const pdf = await pdfjs.getDocument({ data: u8, isEvalSupported: false, useSystemFonts: false })
     .promise;
   const pages: PdfPageInfo[] = [];
