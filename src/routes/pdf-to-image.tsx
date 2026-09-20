@@ -244,7 +244,7 @@ export default function PdfToImagePage() {
                         min={1}
                         placeholder="From"
                         value={from()}
-                        onChange={(e) => setFrom(e.currentTarget.value)}
+                        onInput={(e) => setFrom(e.currentTarget.value)}
                         aria-label="First page"
                       />
                       <input
@@ -252,7 +252,7 @@ export default function PdfToImagePage() {
                         min={1}
                         placeholder={pageCount() ? String(pageCount()) : 'To'}
                         value={to()}
-                        onChange={(e) => setTo(e.currentTarget.value)}
+                        onInput={(e) => setTo(e.currentTarget.value)}
                         aria-label="Last page"
                       />
                     </div>

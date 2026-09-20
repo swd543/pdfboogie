@@ -205,43 +205,51 @@ export function zipEntries(data: Uint8Array): Record<string, Uint8Array> {
   return unzipSync(data);
 }
 
+// Binary validators: ZIP entries (fflate) are plain Uint8Arrays, so every
+// validator normalizes to a Node Buffer for readUInt*BE/LE + toString(enc).
 export function pngSize(data: Uint8Array): { w: number; h: number } | null {
-  if (data.length < 24 || data[0] !== 0x89 || data[1] !== 0x50) return null;
-  return { w: data.readUInt32BE(16), h: data.readUInt32BE(20) };
+  const buf = Buffer.from(data);
+  if (buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50) return null;
+  return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
 }
 
 export function jpegSize(data: Uint8Array): { w: number; h: number } | null {
-  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+  const buf = Buffer.from(data);
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
   let off = 2;
-  while (off + 9 < data.length) {
-    if (data[off] !== 0xff) {
+  while (off + 9 < buf.length) {
+    if (buf[off] !== 0xff) {
       off += 1;
       continue;
     }
-    const marker = data[off + 1];
+    const marker = buf[off + 1];
     if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-      return { h: data.readUInt16BE(off + 5), w: data.readUInt16BE(off + 7) };
+      return { h: buf.readUInt16BE(off + 5), w: buf.readUInt16BE(off + 7) };
     }
-    off += 2 + data.readUInt16BE(off + 2);
+    off += 2 + buf.readUInt16BE(off + 2);
   }
   return null;
 }
 
 export function webpSize(data: Uint8Array): { w: number; h: number } | null {
-  if (data.length < 30) return null;
-  const sig = data.subarray(0, 4).toString('ascii');
-  const fourcc = data.subarray(8, 12).toString('ascii');
+  const buf = Buffer.from(data);
+  if (buf.length < 30) return null;
+  const sig = buf.subarray(0, 4).toString('ascii');
+  const fourcc = buf.subarray(8, 12).toString('ascii');
   if (sig !== 'RIFF' || fourcc !== 'WEBP') return null;
-  if (fourcc === 'WEBP' && data.subarray(12, 16).toString('ascii') === 'VP8X') {
-    return { w: data.readUIntLE(24) + 1, h: data.readUIntLE(27) + 1 };
+  if (fourcc === 'WEBP' && buf.subarray(12, 16).toString('ascii') === 'VP8X') {
+    // VP8X: 24-bit little-endian dimensions (minus 1) at offsets 24 / 27
+    const w = (buf[24]! | (buf[25]! << 8) | (buf[26]! << 16)) + 1;
+    const h = (buf[27]! | (buf[28]! << 8) | (buf[29]! << 16)) + 1;
+    return { w, h };
   }
-  if (data.subarray(12, 16).toString('ascii') === 'VP8 ') {
-    return { w: data.readUInt16LE(26) & 0x3fff, h: data.readUInt16LE(28) & 0x3fff };
+  if (buf.subarray(12, 16).toString('ascii') === 'VP8 ') {
+    return { w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
   }
-  if (data.subarray(12, 16).toString('ascii') === 'VP8L') {
-    const b1 = data[21];
-    const b2 = data[22];
-    const b3 = data[23];
+  if (buf.subarray(12, 16).toString('ascii') === 'VP8L') {
+    const b1 = buf[21];
+    const b2 = buf[22];
+    const b3 = buf[23];
     const w = (b1 | ((b2 & 0x3f) << 8)) + 1;
     const h = ((b2 & 0xc0) << 6) | (b3 << 2) | 0;
     return { w, h: (h >>> 0) + 1 };

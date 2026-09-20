@@ -74,6 +74,9 @@ async function canvasConvertsToWebP(): Promise<boolean> {
   } else {
     try {
       const probe = new OffscreenCanvas(1, 1);
+      // Chromium requires a context before convertToBlob (InvalidStateError
+      // otherwise) — that was silently forcing the PNG fallback.
+      probe.getContext('2d');
       const blob = await probe.convertToBlob({ type: 'image/webp', quality: 0.5 });
       webPSupported = blob.type === 'image/webp';
     } catch {

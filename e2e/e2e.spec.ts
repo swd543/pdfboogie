@@ -508,7 +508,8 @@ test.describe('PDF to image', () => {
     await page.locator('input[aria-label="First page"]').fill('2');
     await page.locator('input[aria-label="Last page"]').fill('4');
     const zipBytes = await captureDownload(page, () =>
-      clickButton(page, /Convert pages 2.?4 to JPEG/),
+      // CTA includes the page count: "Convert pages 2–4 (3) to JPEG"
+      clickButton(page, /Convert pages 2[\u2013-]4 \(3\) to JPEG/),
     );
     const entries = zipEntries(zipBytes);
     const names = Object.keys(entries);
@@ -570,6 +571,7 @@ test.describe('PDF to doc', () => {
     const assertClean = expectClean(page);
     await page.goto('/pdf-to-doc');
     await dropFixtures(page, ['text-1p.pdf']);
+    await page.selectOption('#docfmt', 'odt');
     const odt = await captureDownload(page, () => clickButton(page, /Convert to \.odt/));
     const first = firstZipEntry(odt);
     expect(first.name).toBe('mimetype');
@@ -583,6 +585,7 @@ test.describe('PDF to doc', () => {
     const assertClean = expectClean(page);
     await page.goto('/pdf-to-doc');
     await dropFixtures(page, ['scan-2p.pdf']);
+    await page.selectOption('#docfmt', 'odt');
     const odt = await captureDownload(page, () => clickButton(page, /Convert to \.odt/));
     // must be a valid archive with a content part (even if nearly empty)
     const content = odtXml(odt, 'content.xml');
