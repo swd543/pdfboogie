@@ -70,7 +70,7 @@ src/
   lib/               pdfjs wrapper, pdf-lib wrapper, wasm, zip, imaging, ...
   features/          one folder per tool: pure logic + unit tests
   routes/            one file per public URL (SSG prerenders each)
-wasm/pdfcore/        Rust crate (lopdf) → public/wasm/ (committed build)
+wasm/pdfcore/        Rust crate (lopdf) → wasm/pdfcore/pkg/ (CI-built) → public/wasm/
 e2e/                 Playwright suite, fixtures generator, helpers
 scripts/             asset copy, sitemap/robots postbuild, og-image
 docs/                architecture, ads, seo, deployment

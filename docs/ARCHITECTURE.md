@@ -66,13 +66,18 @@ dependency on a backend. The only "server" is a static file host.
 ## Rust/WASM core (`wasm/pdfcore`)
 
 - `lopdf` 0.37, compiled with `wasm-pack --target web` →
-  `wasm/pdfcore/pkg/` (364 KB `.wasm`, committed so CI never needs Rust).
+  `wasm/pdfcore/pkg/` (~364 KB `.wasm` + JS glue).
 - API (via `src/lib/wasm.ts`): `init()`, `lossless_compress(bytes)`,
   `probe(bytes) → { pages, encrypted, … }`.
-- Rebuild: `pnpm wasm` (needs `rustup` + `wasm-pack` on PATH; do **not**
+- **No build artifacts are committed.** `wasm/pdfcore/pkg/` is a build
+  output (gitignored). CI builds it in a dedicated `wasm` job (Rust
+  toolchain + prebuilt `wasm-pack` binary → `pdfcore-pkg` artifact), and
+  the `test`/`deploy` jobs download it before `pnpm build`. Locally,
+  `pnpm wasm` builds it (needs `rustup` + `wasm-pack` on PATH; do **not**
   use the distro rust). `scripts/copy-assets.mjs` (run on predev/prebuild)
-  copies `pkg/` → `public/wasm/` along with pdf.js cMaps and standard
-  fonts.
+  then copies `pkg/` → `public/wasm/` along with pdf.js cMaps and standard
+  fonts. If WASM fails to load in the browser, the app transparently falls
+  back to a pure-JS re-save.
 
 ## Features are pure modules
 

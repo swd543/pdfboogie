@@ -8,8 +8,9 @@ manual artifact uploading.
 
 | Job | When | What it does |
 |---|---|---|
-| `test` | every push + PR | pnpm 11.13.1 + Node 24 → `typecheck` → `lint` (biome) → unit tests → build with `VITE_BASE=/` → `playwright install --with-deps chromium` → E2E suite against the production `dist` (served on `:8899`) |
-| `deploy` | pushes to `main` | build with `VITE_BASE=/pdfboogie/` + `VITE_SITE_URL=https://swd543.github.io/pdfboogie` → `upload-pages-artifact@v3` → `deploy-pages@v4` |
+| `wasm` | every push + PR | Rust toolchain + prebuilt `wasm-pack` → `wasm-pack build --target web` → uploads `wasm/pdfcore/pkg` as the `pdfcore-pkg` artifact |
+| `test` | every push + PR | downloads `pdfcore-pkg` → pnpm 11.13.1 + Node 24 → `typecheck` → `lint` (biome) → unit tests → build with `VITE_BASE=/` → `playwright install --with-deps chromium` → E2E suite against the production `dist` (served on `:8899`) |
+| `deploy` | pushes to `main` | downloads `pdfcore-pkg` → build with `VITE_BASE=/pdfboogie/` + `VITE_SITE_URL=https://swd543.github.io/pdfboogie` → `upload-pages-artifact@v3` → `deploy-pages@v4` |
 
 Two different base paths by design: E2E serves the app from `/` (the
 Playwright `baseURL`), while the live site lives under the `/pdfboogie/`
@@ -46,11 +47,12 @@ static server so what is tested is exactly what gets deployed.
 
 ## Updating the WASM core
 
-The Rust crate lives in `wasm/pdfcore/`. Rebuilding it is an **optional,
-local** step — CI never compiles Rust: `wasm/pdfcore/pkg/` (the built
-`.wasm` + JS glue) is committed, and `scripts/copy-assets.mjs` copies it
-into `public/wasm/` on every build. To rebuild: install `rustup` +
-`wasm-pack`, run `pnpm wasm`, commit `wasm/pdfcore/pkg/`.
+The Rust crate lives in `wasm/pdfcore/`. `wasm/pdfcore/pkg/` is a build
+artifact (gitignored) — **nothing is committed**; CI compiles it in the
+`wasm` job and both builds download the `pdfcore-pkg` artifact. To rebuild
+locally: install `rustup` + `wasm-pack`, then `pnpm wasm` (writes
+`wasm/pdfcore/pkg/`, which `scripts/copy-assets.mjs` copies into
+`public/wasm/`). No git step is needed — just push the source changes.
 
 ## Notes
 

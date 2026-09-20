@@ -13,13 +13,55 @@ env:
   # Pages site parameters — used for the deploy build (base path + absolute URLs)
   VITE_BASE: /pdfboogie/
   VITE_SITE_URL: https://swd543.github.io/pdfboogie
+  WASM_PACK_VERSION: "0.13.1"
 
 jobs:
-  test:
-    name: Typecheck, unit tests, E2E
+  # Build the Rust/WASM core from source. The output (wasm/pdfcore/pkg) is
+  # uploaded as an artifact and consumed by both builds — no build artifacts
+  # are committed to the repo.
+  wasm:
+    name: Build Rust/WASM core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack (prebuilt binary, no cargo-compile wait)
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o /tmp/wasm-pack.tgz
+          tar -xzf /tmp/wasm-pack.tgz -C "$HOME/.local/bin"
+          wasm-pack --version
+
+      - name: Build pdfcore (web target)
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          cd wasm/pdfcore
+          wasm-pack build . --target web --out-dir pkg --out-name pdfcore
+
+      - name: Upload pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcore-pkg
+          path: wasm/pdfcore/pkg
+          if-no-files-found: error
+
+  test:
+    name: Typecheck, unit tests, E2E
+    runs-on: ubuntu-latest
+    needs: wasm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WASM core
+        uses: actions/download-artifact@v4
+        with:
+          name: pdfcore-pkg
+          path: wasm/pdfcore/pkg
 
       - uses: pnpm/action-setup@v4
         with:
@@ -63,7 +105,7 @@ jobs:
   deploy:
     name: Build & deploy to GitHub Pages
     runs-on: ubuntu-latest
-    needs: test
+    needs: [wasm, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
@@ -74,6 +116,12 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download WASM core
+        uses: actions/download-artifact@v4
+        with:
+          name: pdfcore-pkg
+          path: wasm/pdfcore/pkg
 
       - uses: pnpm/action-setup@v4
         with:
