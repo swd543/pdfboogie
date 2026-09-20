@@ -51,6 +51,9 @@ jobs:
           pnpm build
           node scripts/postbuild.mjs
 
+      - name: Install Ghostscript (E2E encrypted fixture)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ghostscript
+
       - name: Install Playwright browser + system deps
         run: pnpm exec playwright install --with-deps chromium
 
