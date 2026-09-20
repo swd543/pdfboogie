@@ -1,0 +1,2 @@
+# wasm-pack normally writes `*` here (pkg is normally a build artifact).
+# We commit the prebuilt pkg on purpose: CI never compiles Rust.

@@ -1,0 +1,17 @@
+{
+  "name": "pdfcore",
+  "type": "module",
+  "description": "WASM core for in-browser PDF utilities: lossless re-save + document probing (lopdf)",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "pdfcore_bg.wasm",
+    "pdfcore.js",
+    "pdfcore.d.ts"
+  ],
+  "main": "pdfcore.js",
+  "types": "pdfcore.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
